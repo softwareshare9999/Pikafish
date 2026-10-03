@@ -28,6 +28,10 @@ bool Position::chase_legal(Move m, Bitboard b) const {
     Color    us       = sideToMove;
     Square   from     = m.from_sq();
     Square   to       = m.to_sq();
+
+    if (tied_move(m))
+        return false;
+
     Bitboard occupied = (pieces() ^ from) | to;
 
     assert(color_of(moved_piece(m)) == us);

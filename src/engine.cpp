@@ -175,6 +175,11 @@ std::optional<PositionSetError> Engine::set_position(const std::string&         
     if (err.has_value())
         return err;
 
+    struct ApplyingPositionGuard {
+        ApplyingPositionGuard() { RuleConfig::applyingPosition = true; }
+        ~ApplyingPositionGuard() { RuleConfig::applyingPosition = false; }
+    } applyingPositionGuard;
+
     for (const auto& move : moves)
     {
         auto m = UCIEngine::to_move(pos, move);

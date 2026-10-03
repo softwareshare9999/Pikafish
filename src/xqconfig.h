@@ -41,6 +41,20 @@ extern int            mateThreatDepth;
 extern bool           sixtyMoveRule;
 extern int            rule60MaxPly;
 
+// Frozen squares from UCI TiedPieces (e.g. a4a5, i4i5, e4e5).
+// Absolute ICCS squares: the same whether Red or Black moves first.
+// SQ_NONE means the option is unset.
+extern Square tiedSq1;
+extern Square tiedSq2;
+
+// True while UCI "position" is applying a move list, so setup moves that
+// land on a locked square (a3a4, a6a5, ...) are not rejected.
+extern bool applyingPosition;
+
+inline bool is_tied_square(Square s) {
+    return tiedSq1 != SQ_NONE && (s == tiedSq1 || s == tiedSq2);
+}
+
 inline bool chinese_like() {
     return repetitionRule == RepetitionRule::CHINESE || repetitionRule == RepetitionRule::SKY;
 }

@@ -434,6 +434,20 @@ Bitboard Position::checkers_to(Color c, Square s, Bitboard occupied) const {
 }
 
 
+// Locked website pawns: do not move a piece that sits on a tied square,
+// and do not capture a piece that sits on a tied square. Empty tied
+// squares stay walkable so "position startpos moves a3a4" can be applied.
+bool Position::tied_move(Move m) const {
+    if (RuleConfig::applyingPosition || RuleConfig::tiedSq1 == SQ_NONE)
+        return false;
+
+    const Square from = m.from_sq();
+    const Square to   = m.to_sq();
+    if (RuleConfig::is_tied_square(from))
+        return true;
+    return RuleConfig::is_tied_square(to) && piece_on(to) != NO_PIECE;
+}
+
 // Tests whether a pseudo-legal move is legal
 bool Position::legal(Move m) const {
 
@@ -442,6 +456,10 @@ bool Position::legal(Move m) const {
     Color    us       = sideToMove;
     Square   from     = m.from_sq();
     Square   to       = m.to_sq();
+
+    if (tied_move(m))
+        return false;
+
     Bitboard occupied = (pieces() ^ from) | to;
 
     assert(color_of(moved_piece(m)) == us);
@@ -476,6 +494,9 @@ bool Position::pseudo_legal(const Move m) const {
     Square from = m.from_sq();
     Square to   = m.to_sq();
     Piece  pc   = moved_piece(m);
+
+    if (tied_move(m))
+        return false;
 
     // If the 'from' square is not occupied by a piece belonging to the side to
     // move, the move is obviously not legal.
@@ -1140,6 +1161,10 @@ bool Position::chase_legal(Move m) const {
     Color    us       = sideToMove;
     Square   from     = m.from_sq();
     Square   to       = m.to_sq();
+
+    if (tied_move(m))
+        return false;
+
     Bitboard occupied = (pieces() ^ from) | to;
 
     assert(color_of(moved_piece(m)) == us);

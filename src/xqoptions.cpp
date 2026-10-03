@@ -5,8 +5,11 @@
 #include "xqoptions.h"
 
 #include <algorithm>
+#include <cctype>
+#include <string>
 
 #include "misc.h"
+#include "types.h"
 #include "ucioption.h"
 
 namespace Stockfish {
@@ -17,7 +20,50 @@ DrawRule       drawRule        = DrawRule::NONE;
 int            mateThreatDepth = 10;
 bool           sixtyMoveRule   = true;
 int            rule60MaxPly    = 120;
+Square         tiedSq1           = SQ_NONE;
+Square         tiedSq2           = SQ_NONE;
+bool           applyingPosition  = false;
 }  // namespace RuleConfig
+
+namespace {
+
+Square parse_uci_square(char file, char rank) {
+    if (file < 'a' || file > 'i' || rank < '0' || rank > '9')
+        return SQ_NONE;
+    return make_square(File(file - 'a'), Rank(rank - '0'));
+}
+
+// Parse two ICCS squares. The website cases after each pawn advances once:
+//   a4a5  leftmost file (Red a4, Black a5)
+//   i4i5  rightmost file (Red i4, Black i5)
+//   e4e5  center file (Red e4, Black e5)
+// Order, spaces, commas, and case are ignored. Empty clears the lock.
+void set_tied_pieces(const std::string& raw) {
+    std::string s;
+    s.reserve(raw.size());
+    for (unsigned char c : raw)
+        if (!std::isspace(c) && c != ',' && c != '-' && c != '_')
+            s.push_back(char(std::tolower(c)));
+
+    RuleConfig::tiedSq1 = SQ_NONE;
+    RuleConfig::tiedSq2 = SQ_NONE;
+
+    if (s.empty() || s == "<empty>")
+        return;
+
+    if (s.size() < 4)
+        return;
+
+    const Square s1 = parse_uci_square(s[0], s[1]);
+    const Square s2 = parse_uci_square(s[2], s[3]);
+    if (!is_ok(s1) || !is_ok(s2) || s1 == s2)
+        return;
+
+    RuleConfig::tiedSq1 = s1;
+    RuleConfig::tiedSq2 = s2;
+}
+
+}  // namespace
 
 void add_extended_options(OptionsMap& options) {
 
@@ -101,6 +147,12 @@ void add_extended_options(OptionsMap& options) {
           scoreTypeMode = o == "Elo"  ? ScoreTypeMode::ELO
                         : o == "Raw" ? ScoreTypeMode::RAW
                                      : ScoreTypeMode::PAWN_VALUE_NORMALIZED;
+          return std::nullopt;
+      }));
+
+    options.add(  //
+      "TiedPieces", Option("", [](const Option& o) {
+          set_tied_pieces(std::string(o));
           return std::nullopt;
       }));
 }
