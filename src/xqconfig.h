@@ -13,8 +13,10 @@
 namespace Stockfish {
 
 // UCI-driven Xiangqi rule knobs. Default repetition rule is AsianRule
-// (2-fold), with rule120 and the sixty-move rule on. ComputerRule restores
-// official Pikafish 3-fold adjudication.
+// (2-fold after the search root is immediately terminal), with rule120
+// and the sixty-move rule on. ComputerRule restores official Pikafish
+// 3-fold adjudication. Pre-root 2-folds wait for a third occurrence so
+// the side to move can still stop chasing.
 namespace RuleConfig {
 
 enum class RepetitionRule {

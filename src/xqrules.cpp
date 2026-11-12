@@ -603,11 +603,13 @@ bool Position::xq_rule_judge(Value& result, int ply) {
             {
                 ++cnt;
 
-                const bool computerReady =
-                  RuleConfig::repetitionRule == RR::COMPUTER && (cnt == 2 || ply > i);
-                const bool legacyReady = RuleConfig::repetitionRule != RR::COMPUTER && cnt >= 1;
-
-                if (computerReady || legacyReady)
+                // Same gate as official Pikafish: a 2-fold is only terminal
+                // if the earlier occurrence is strictly after the search root
+                // (`ply > i`). A repeat that started in game history waits for
+                // a third occurrence (`cnt == 2`), so the side to move can still
+                // stop chasing. AsianRule used to fire on `cnt >= 1` regardless
+                // of ply, which made 炮六平五 a false mate-in-1 in issue #146.
+                if (cnt == 2 || ply > i)
                 {
                     if (RuleConfig::repetitionRule == RR::NO_JUDGEMENT)
                         result = VALUE_DRAW;
