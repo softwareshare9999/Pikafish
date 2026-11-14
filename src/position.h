@@ -58,20 +58,21 @@ struct StateInfo {
     int   pliesFromNull;
 
     // Not copied when making a move (will be recomputed anyhow)
-    Key        key;
-    Bitboard   checkersBB;
-    StateInfo* previous;
-    Bitboard   blockersForKing[COLOR_NB];
-    Bitboard   pinners[COLOR_NB];
-    Bitboard   checkSquares[PIECE_TYPE_NB];
-    Bitboard   threats[PIECE_TYPE_NB];
-    Piece      capturedPiece;
-    Move       move;
+    Key                           key;
+    Bitboard                      checkersBB;
+    StateInfo*                    previous;
+    Bitboard                      blockersForKing[COLOR_NB];
+    Bitboard                      pinners[COLOR_NB];
+    Bitboard                      checkSquares[PIECE_TYPE_NB];
+    Bitboard                      threats[PIECE_TYPE_NB];
+    Piece                         capturedPiece;
+    Move                          move;
+    std::array<u8, SQUARE_NB / 2> piecePlacement;
 
     // Extended XQ rule state (not copied on do_move; filled while rolling back)
-    u16        skyVictims;
-    u16        skyCheckers;
-    u16        skyChasers;
+    u16 skyVictims;
+    u16 skyCheckers;
+    u16 skyChasers;
 };
 
 
@@ -93,8 +94,6 @@ struct PositionSetError: std::runtime_error {
 // traversing the search tree.
 class Position {
    public:
-    static void init();
-
     Position()                           = default;
     Position(const Position&)            = delete;
     Position& operator=(const Position&) = delete;
