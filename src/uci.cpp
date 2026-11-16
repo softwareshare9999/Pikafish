@@ -137,6 +137,11 @@ void UCIEngine::loop() {
         }
         else if (token == "position")
             position(is);
+        // Non-standard: some GUIs (EThinker auto) omit the "position" prefix
+        // and send a bare "fen ..." or "startpos" line. Rewind the stream so
+        // position() can parse it the same way as "position fen/startpos ...".
+        else if (token == "fen" || token == "startpos")
+            is.seekg(0), position(is);
         else if (token == "ucinewgame")
             engine.search_clear();
         else if (token == "isready")
