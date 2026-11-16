@@ -114,6 +114,8 @@ Move* generate(const Position& pos, Move* moveList) {
     static_assert(Type != ALL, "Unsupported type in generate()");
     assert((Type == EVASIONS) == bool(pos.checkers()));
 
+    Move* const start = moveList;
+
     const Color  us     = pos.side_to_move();
     const Square ksq    = pos.king_square(us);
     Bitboard     target = Type == EVASIONS ? ~pos.pieces(us)
@@ -140,6 +142,19 @@ Move* generate(const Position& pos, Move* moveList) {
         b &= ~pos.threats_by(ALL_PIECES);
     while (b)
         *moveList++ = Move(ksq, pop_lsb(b));
+
+    // Upstream generate() is fully legal for checks/pins, so search no longer
+    // calls Position::legal() on every move. Re-apply TiedPieces here: do not
+    // move a piece sitting on a locked square, and do not capture one either.
+    // Setup still uses applyingPosition so "position startpos moves e3e4" works.
+    if (!RuleConfig::applyingPosition && RuleConfig::tiedSq1 != SQ_NONE)
+    {
+        Move* dst = start;
+        for (Move* cur = start; cur != moveList; ++cur)
+            if (!pos.tied_move(*cur))
+                *dst++ = *cur;
+        return dst;
+    }
 
     return moveList;
 }
