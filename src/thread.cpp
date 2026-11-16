@@ -197,10 +197,8 @@ void ThreadPool::set(const NumaConfig&                           numaConfig,
         if (boundThreadToNumaNode.empty())
             counts[0] = requested;  // Pretend all threads are part of numa node 0
         else
-        {
             for (usize i = 0; i < boundThreadToNumaNode.size(); ++i)
                 counts[boundThreadToNumaNode[i]]++;
-        }
 
         sharedState.sharedHistories.clear();
         for (auto pair : counts)
@@ -308,7 +306,7 @@ void ThreadPool::start_thinking(Position& pos, StateListPtr& states, Search::Lim
     }
 
     if (rootMoves.empty())
-        for (const auto& m : MoveList<LEGAL>(pos))
+        for (const auto& m : MoveList<ALL>(pos))
             rootMoves.emplace_back(m);
 
     // After ownership transfer 'states' becomes empty, so if we stop the search

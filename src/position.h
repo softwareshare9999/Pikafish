@@ -34,13 +34,12 @@
 #include "attacks.h"
 #include "bitboard.h"
 #include "misc.h"
-#include "nnue/features/half_ka_v2_hm.h"
+#include "nnue/features/k6h4.h"
 #include "types.h"
 #include "xqconfig.h"
 
 namespace Stockfish {
 
-class TranspositionTable;
 struct SharedHistories;
 
 // StateInfo struct stores information needed to restore a Position object to
@@ -59,20 +58,21 @@ struct StateInfo {
     int   pliesFromNull;
 
     // Not copied when making a move (will be recomputed anyhow)
-    Key        key;
-    Bitboard   checkersBB;
-    StateInfo* previous;
-    Bitboard   blockersForKing[COLOR_NB];
-    Bitboard   pinners[COLOR_NB];
-    Bitboard   checkSquares[PIECE_TYPE_NB];
-    bool       needFullCheck;
-    Piece      capturedPiece;
-    Move       move;
+    Key                           key;
+    Bitboard                      checkersBB;
+    StateInfo*                    previous;
+    Bitboard                      blockersForKing[COLOR_NB];
+    Bitboard                      pinners[COLOR_NB];
+    Bitboard                      checkSquares[PIECE_TYPE_NB];
+    Bitboard                      threats[PIECE_TYPE_NB];
+    Piece                         capturedPiece;
+    Move                          move;
+    std::array<u8, SQUARE_NB / 2> piecePlacement;
 
     // Extended XQ rule state (not copied on do_move; filled while rolling back)
-    u16        skyVictims;
-    u16        skyCheckers;
-    u16        skyChasers;
+    u16 skyVictims;
+    u16 skyCheckers;
+    u16 skyChasers;
 };
 
 
@@ -94,8 +94,6 @@ struct PositionSetError: std::runtime_error {
 // traversing the search tree.
 class Position {
    public:
-    static void init();
-
     Position()                           = default;
     Position(const Position&)            = delete;
     Position& operator=(const Position&) = delete;
@@ -135,12 +133,11 @@ class Position {
     void     update_blockers() const;
     Bitboard checkers_to(Color c, Square s) const;
     Bitboard checkers_to(Color c, Square s, Bitboard occupied) const;
-    template<PieceType Pt>
-    Bitboard attacks_by(Color c) const;
+    Bitboard xattacks_by(PieceType pt, Color c, Bitboard occupied) const;
+    Bitboard threats_by(PieceType pt) const;
 
     // Properties of moves
     bool  legal(Move m) const;
-    bool  pseudo_legal(const Move m) const;
     bool  tied_move(Move m) const;
     bool  capture(Move m) const;
     bool  gives_check(Move m) const;
@@ -148,13 +145,12 @@ class Position {
     Piece captured_piece() const;
 
     // Doing and undoing moves
-    void do_move(Move m, StateInfo& newSt, const TranspositionTable* tt);
-    void do_move(Move                      m,
-                 StateInfo&                newSt,
-                 bool                      givesCheck,
-                 Dirties&                  dirties,
-                 const TranspositionTable* tt,
-                 const SharedHistories*    worker);
+    void do_move(Move m, StateInfo& newSt);
+    void do_move(Move                   m,
+                 StateInfo&             newSt,
+                 bool                   givesCheck,
+                 Dirties&               dirties,
+                 const SharedHistories* worker = nullptr);
     void undo_move(Move m);
     void do_null_move(StateInfo& newSt);
     void undo_null_move();
@@ -192,7 +188,8 @@ class Position {
    private:
     // Initialization helpers (used while setting up a position)
     void set_state() const;
-    void set_check_info() const;
+    void set_extra_bitboards() const;
+    void compute_threats() const;
 
     // Other helpers
     template<bool ComputeRay = true>
@@ -284,17 +281,29 @@ inline Bitboard Position::checkers_to(Color c, Square s) const {
     return checkers_to(c, s, pieces());
 }
 
-template<PieceType Pt>
-inline Bitboard Position::attacks_by(Color c) const {
+// Includes X-ray attacks through the king of color ~c.
+inline Bitboard Position::xattacks_by(PieceType pt, Color c, Bitboard occupied) const {
 
     Bitboard threats   = 0;
-    Bitboard attackers = pieces(c, Pt);
+    Bitboard attackers = pieces(c, pt);
     while (attackers)
-        if (Pt == PAWN)
-            threats |= Attacks::attacks_bb(PAWN, pop_lsb(attackers), c);
+    {
+        Square s = pop_lsb(attackers);
+        if (pt == PAWN)
+            threats |= Attacks::attacks_bb(PAWN, s, c);
+        else if (pt == KING)
+            threats |=
+              Attacks::attacks_bb(KING, s) | (Attacks::attacks_bb(ROOK, s, occupied) & file_bb(s));
         else
-            threats |= Attacks::attacks_bb(Pt, pop_lsb(attackers), pieces());
+            threats |= Attacks::attacks_bb(pt, s, occupied);
+    }
     return threats;
+}
+
+inline Bitboard Position::threats_by(PieceType pt) const {
+    if (!st->threats[ALL_PIECES])
+        compute_threats();
+    return st->threats[pt];
 }
 
 inline Bitboard Position::checkers() const { return st->checkersBB; }
@@ -343,7 +352,7 @@ inline void Position::put_piece(Piece pc, Square s, DirtyThreats* const dts) {
     byColorBB[color_of(pc)] |= s;
     pieceCount[pc]++;
     pieceCount[make_piece(color_of(pc), ALL_PIECES)]++;
-    midEncoding[color_of(pc)] += Eval::NNUE::Features::HalfKAv2_hm::MidMirrorEncoding[pc][s];
+    midEncoding[color_of(pc)] += Eval::NNUE::Features::K6H4::MidMirrorEncoding[pc][s];
 
     if (dts)
         update_piece_threats(pc, true, s, dts);
@@ -362,7 +371,7 @@ inline void Position::remove_piece(Square s, DirtyThreats* const dts) {
     board[s] = NO_PIECE;
     pieceCount[pc]--;
     pieceCount[make_piece(color_of(pc), ALL_PIECES)]--;
-    midEncoding[color_of(pc)] -= Eval::NNUE::Features::HalfKAv2_hm::MidMirrorEncoding[pc][s];
+    midEncoding[color_of(pc)] -= Eval::NNUE::Features::K6H4::MidMirrorEncoding[pc][s];
 }
 
 inline void Position::move_piece(Square from, Square to, DirtyThreats* const dts) {
@@ -378,8 +387,8 @@ inline void Position::move_piece(Square from, Square to, DirtyThreats* const dts
     byColorBB[color_of(pc)] ^= fromTo;
     board[from] = NO_PIECE;
     board[to]   = pc;
-    midEncoding[color_of(pc)] -= Eval::NNUE::Features::HalfKAv2_hm::MidMirrorEncoding[pc][from];
-    midEncoding[color_of(pc)] += Eval::NNUE::Features::HalfKAv2_hm::MidMirrorEncoding[pc][to];
+    midEncoding[color_of(pc)] -= Eval::NNUE::Features::K6H4::MidMirrorEncoding[pc][from];
+    midEncoding[color_of(pc)] += Eval::NNUE::Features::K6H4::MidMirrorEncoding[pc][to];
 
     if (dts)
         update_piece_threats(pc, true, to, dts);
@@ -399,9 +408,9 @@ inline void Position::swap_piece(Square s, Piece pc, DirtyThreats* const dts) {
         update_piece_threats<false>(pc, true, s, dts);
 }
 
-inline void Position::do_move(Move m, StateInfo& newSt, const TranspositionTable* tt = nullptr) {
+inline void Position::do_move(Move m, StateInfo& newSt) {
     new (&scratchDirties.dirtyThreats) DirtyThreats;
-    do_move(m, newSt, gives_check(m), scratchDirties, tt, nullptr);
+    do_move(m, newSt, gives_check(m), scratchDirties);
 }
 
 inline StateInfo* Position::state() const { return st; }

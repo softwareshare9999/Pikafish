@@ -24,7 +24,7 @@
 #include <cstdint>
 #include <iosfwd>
 
-#include "features/half_ka_v2_hm.h"
+#include "features/k6h4.h"
 #include "features/full_threats.h"
 #include "layers/affine_transform.h"
 #include "layers/affine_transform_sparse_input.h"
@@ -37,14 +37,15 @@ namespace Stockfish::Eval::NNUE {
 
 // Input features used in evaluation function
 using ThreatFeatureSet = Features::FullThreats;
-using PSQFeatureSet    = Features::HalfKAv2_hm;
+using PSQFeatureSet    = Features::K6H4;
 
 // Number of input feature dimensions after conversion
 constexpr IndexType L1 = 1024;
 constexpr int       L2 = 32;
 constexpr int       L3 = 32;
 
-constexpr IndexType LayerStacks = 16;
+constexpr IndexType RawLayerStacks = 32;
+constexpr IndexType LayerStacks    = RawLayerStacks;
 
 struct NetworkArchitecture {
     static constexpr IndexType TransformedFeatureDimensions = L1;
