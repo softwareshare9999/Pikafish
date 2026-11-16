@@ -63,11 +63,11 @@ jobs:
 
   Pikafish-MacOS:
     name: MacOS-universal
-    # macos-15-intel currently fails to acquire a hosted runner ("The job was
-    # not acquired by Runner of type hosted even after multiple attempts").
-    # macos-latest matches official Pikafish; macos-lipo still cross-compiles
-    # both slices (-arch x86_64 / -arch arm64) on Apple Silicon hosts.
-    runs-on: macos-latest
+    # macos-latest is arm64 (macOS 26, M1) and is heavily oversubscribed, which
+    # causes "The job was not acquired by Runner of type hosted" failures.
+    # An Intel runner is far more available, and macos-lipo cross-compiles both
+    # slices (-arch x86_64 / -arch arm64) regardless of the host architecture.
+    runs-on: macos-15-intel
     env:
       COMP: clang
       EXE: Pikafish-MacOS-universal
