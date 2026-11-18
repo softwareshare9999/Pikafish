@@ -138,10 +138,16 @@ void UCIEngine::loop() {
         else if (token == "position")
             position(is);
         // Non-standard: some GUIs (EThinker auto) omit the "position" prefix
-        // and send a bare "fen ..." or "startpos" line. Rewind the stream so
-        // position() can parse it the same way as "position fen/startpos ...".
+        // and send a bare "fen ..." or "startpos" line. Rebuild the command
+        // instead of seekg(0): MinGW libstdc++ + LTO does not link
+        // istream::seekg(pos_type).
         else if (token == "fen" || token == "startpos")
-            is.seekg(0), position(is);
+        {
+            std::string rest;
+            std::getline(is, rest);
+            std::istringstream rewound(token + rest);
+            position(rewound);
+        }
         else if (token == "ucinewgame")
             engine.search_clear();
         else if (token == "isready")

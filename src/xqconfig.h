@@ -43,9 +43,9 @@ extern int            mateThreatDepth;
 extern bool           sixtyMoveRule;
 extern int            rule60MaxPly;
 
-// Frozen squares from UCI TiedPieces (e.g. a4a5, i4i5, e4e5).
+// Frozen squares from UCI TiedPieces combo (None, a4a5, i4i5, e4e5).
 // Absolute ICCS squares: the same whether Red or Black moves first.
-// SQ_NONE means the option is unset.
+// SQ_NONE means the option is unset (None).
 extern Square tiedSq1;
 extern Square tiedSq2;
 

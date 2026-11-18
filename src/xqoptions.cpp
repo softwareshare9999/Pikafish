@@ -5,8 +5,6 @@
 #include "xqoptions.h"
 
 #include <algorithm>
-#include <cctype>
-#include <string>
 
 #include "misc.h"
 #include "types.h"
@@ -27,40 +25,32 @@ bool           applyingPosition  = false;
 
 namespace {
 
-Square parse_uci_square(char file, char rank) {
-    if (file < 'a' || file > 'i' || rank < '0' || rank > '9')
-        return SQ_NONE;
-    return make_square(File(file - 'a'), Rank(rank - '0'));
-}
-
-// Parse two ICCS squares. The website cases after each pawn advances once:
+// Combo values match the website cases after each pawn advances once:
 //   a4a5  leftmost file (Red a4, Black a5)
 //   i4i5  rightmost file (Red i4, Black i5)
 //   e4e5  center file (Red e4, Black e5)
-// Order, spaces, commas, and case are ignored. Empty clears the lock.
-void set_tied_pieces(const std::string& raw) {
-    std::string s;
-    s.reserve(raw.size());
-    for (unsigned char c : raw)
-        if (!std::isspace(c) && c != ',' && c != '-' && c != '_')
-            s.push_back(char(std::tolower(c)));
-
-    RuleConfig::tiedSq1 = SQ_NONE;
-    RuleConfig::tiedSq2 = SQ_NONE;
-
-    if (s.empty() || s == "<empty>")
-        return;
-
-    if (s.size() < 4)
-        return;
-
-    const Square s1 = parse_uci_square(s[0], s[1]);
-    const Square s2 = parse_uci_square(s[2], s[3]);
-    if (!is_ok(s1) || !is_ok(s2) || s1 == s2)
-        return;
-
-    RuleConfig::tiedSq1 = s1;
-    RuleConfig::tiedSq2 = s2;
+// Combo (not string) so UCCI-era GUIs such as EThinker still list the option.
+void set_tied_pieces(const Option& o) {
+    if (o == "a4a5")
+    {
+        RuleConfig::tiedSq1 = SQ_A4;
+        RuleConfig::tiedSq2 = SQ_A5;
+    }
+    else if (o == "i4i5")
+    {
+        RuleConfig::tiedSq1 = SQ_I4;
+        RuleConfig::tiedSq2 = SQ_I5;
+    }
+    else if (o == "e4e5")
+    {
+        RuleConfig::tiedSq1 = SQ_E4;
+        RuleConfig::tiedSq2 = SQ_E5;
+    }
+    else
+    {
+        RuleConfig::tiedSq1 = SQ_NONE;
+        RuleConfig::tiedSq2 = SQ_NONE;
+    }
 }
 
 }  // namespace
@@ -151,8 +141,9 @@ void add_extended_options(OptionsMap& options) {
       }));
 
     options.add(  //
-      "TiedPieces", Option("", [](const Option& o) {
-          set_tied_pieces(std::string(o));
+      "TiedPieces",
+      Option("None var None var a4a5 var i4i5 var e4e5", "None", [](const Option& o) {
+          set_tied_pieces(o);
           return std::nullopt;
       }));
 }
