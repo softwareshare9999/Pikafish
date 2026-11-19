@@ -56,6 +56,10 @@ jobs:
           make strip EXE=$EXE
           cp $EXE ../
 
+      - name: TiedPieces regression test
+        if: runner.os == 'Linux'
+        run: python3 ../tests/tied_pieces.py ./$EXE
+
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ env.EXE }}
