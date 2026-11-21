@@ -147,7 +147,7 @@ Move* generate(const Position& pos, Move* moveList) {
     // calls Position::legal() on every move. Re-apply TiedPieces here: do not
     // move a piece sitting on a locked square, and do not capture one either.
     // Setup still uses applyingPosition so "position startpos moves e3e4" works.
-    if (!RuleConfig::applyingPosition && RuleConfig::tiedSq1 != SQ_NONE)
+    if (!RuleConfig::applyingPosition && RuleConfig::has_tied_squares())
     {
         Move* dst = start;
         for (Move* cur = start; cur != moveList; ++cur)

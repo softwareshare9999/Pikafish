@@ -43,18 +43,19 @@ extern int            mateThreatDepth;
 extern bool           sixtyMoveRule;
 extern int            rule60MaxPly;
 
-// Frozen squares from UCI TiedPieces combo (None, a4a5, i4i5, e4e5).
-// Absolute ICCS squares: the same whether Red or Black moves first.
-// SQ_NONE means the option is unset (None).
-extern Square tiedSq1;
-extern Square tiedSq2;
+// Frozen squares from UCI TiedPieces. Absolute ICCS squares: the same
+// whether Red or Black moves first. Empty bitboard means the option is
+// unset (None). Any set of squares is allowed (a4a5, c4c5g4g5, ...).
+extern Bitboard tiedSquares;
 
 // True while UCI "position" is applying a move list, so setup moves that
 // land on a locked square (a3a4, a6a5, ...) are not rejected.
 extern bool applyingPosition;
 
+inline bool has_tied_squares() { return tiedSquares != 0; }
+
 inline bool is_tied_square(Square s) {
-    return tiedSq1 != SQ_NONE && (s == tiedSq1 || s == tiedSq2);
+    return is_ok(s) && (tiedSquares & (Bitboard(1ULL) << u8(s))) != 0;
 }
 
 inline bool chinese_like() {

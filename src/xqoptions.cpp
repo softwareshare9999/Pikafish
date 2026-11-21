@@ -5,7 +5,11 @@
 #include "xqoptions.h"
 
 #include <algorithm>
+#include <cctype>
+#include <optional>
+#include <string>
 
+#include "bitboard.h"
 #include "misc.h"
 #include "types.h"
 #include "ucioption.h"
@@ -18,39 +22,55 @@ DrawRule       drawRule        = DrawRule::NONE;
 int            mateThreatDepth = 10;
 bool           sixtyMoveRule   = true;
 int            rule60MaxPly    = 120;
-Square         tiedSq1           = SQ_NONE;
-Square         tiedSq2           = SQ_NONE;
+Bitboard       tiedSquares       = 0;
 bool           applyingPosition  = false;
 }  // namespace RuleConfig
 
 namespace {
 
-// Combo values match the website cases after each pawn advances once:
-//   a4a5  leftmost file (Red a4, Black a5)
-//   i4i5  rightmost file (Red i4, Black i5)
-//   e4e5  center file (Red e4, Black e5)
-// Combo (not string) so UCCI-era GUIs such as EThinker still list the option.
-void set_tied_pieces(const Option& o) {
-    if (o == "a4a5")
+// Parse ICCS squares from a UCI string. "None" / empty clears the lock.
+// Legacy presets a4a5, i4i5, e4e5 are ordinary two-square lists. Separators
+// (space, comma, semicolon, colon, plus, pipe, hyphen) are ignored, so
+// "c4c5g4g5" and "c4,c5,g4,g5" both freeze those four squares.
+// Invalid input leaves the previous mask unchanged.
+bool parse_tied_squares(const std::string& raw, Bitboard& out) {
+    std::string s;
+    s.reserve(raw.size());
+    for (unsigned char c : raw)
     {
-        RuleConfig::tiedSq1 = SQ_A4;
-        RuleConfig::tiedSq2 = SQ_A5;
+        if (c == ',' || c == ';' || c == ':' || c == '+' || c == '|' || c == '-' || std::isspace(c))
+            continue;
+        s.push_back(char(std::tolower(c)));
     }
-    else if (o == "i4i5")
+
+    if (s.empty() || s == "none" || s == "<empty>")
     {
-        RuleConfig::tiedSq1 = SQ_I4;
-        RuleConfig::tiedSq2 = SQ_I5;
+        out = 0;
+        return true;
     }
-    else if (o == "e4e5")
+
+    if (s.size() % 2 != 0)
+        return false;
+
+    Bitboard bb = 0;
+    for (size_t i = 0; i < s.size(); i += 2)
     {
-        RuleConfig::tiedSq1 = SQ_E4;
-        RuleConfig::tiedSq2 = SQ_E5;
+        const char file = s[i];
+        const char rank = s[i + 1];
+        if (file < 'a' || file > 'i' || rank < '0' || rank > '9')
+            return false;
+        bb |= square_bb(make_square(File(file - 'a'), Rank(rank - '0')));
     }
-    else
-    {
-        RuleConfig::tiedSq1 = SQ_NONE;
-        RuleConfig::tiedSq2 = SQ_NONE;
-    }
+    out = bb;
+    return true;
+}
+
+std::optional<std::string> set_tied_pieces(const Option& o) {
+    Bitboard bb;
+    if (!parse_tied_squares(std::string(o), bb))
+        return std::string("TiedPieces: ignored invalid square list");
+    RuleConfig::tiedSquares = bb;
+    return std::nullopt;
 }
 
 }  // namespace
@@ -141,11 +161,7 @@ void add_extended_options(OptionsMap& options) {
       }));
 
     options.add(  //
-      "TiedPieces",
-      Option("None var None var a4a5 var i4i5 var e4e5", "None", [](const Option& o) {
-          set_tied_pieces(o);
-          return std::nullopt;
-      }));
+      "TiedPieces", Option("None", [](const Option& o) { return set_tied_pieces(o); }));
 }
 
 namespace Search {

@@ -480,11 +480,11 @@ Bitboard Position::checkers_to(Color c, Square s, Bitboard occupied) const {
 }
 
 
-// Locked website pawns: do not move a piece that sits on a tied square,
-// and do not capture a piece that sits on a tied square. Empty tied
-// squares stay walkable so "position startpos moves a3a4" can be applied.
+// TiedPieces: do not move a piece that sits on a tied square, and do not
+// capture a piece that sits on a tied square. Empty tied squares stay
+// walkable so "position startpos moves a3a4" can be applied.
 bool Position::tied_move(Move m) const {
-    if (RuleConfig::applyingPosition || RuleConfig::tiedSq1 == SQ_NONE)
+    if (RuleConfig::applyingPosition || !RuleConfig::has_tied_squares())
         return false;
 
     const Square from = m.from_sq();

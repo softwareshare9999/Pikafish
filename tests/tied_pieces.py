@@ -7,11 +7,12 @@ presence/absence of specific ICCS moves (not perft node counts), so
 unrelated move-generator changes from upstream do not fail this suite.
 
 The engine still implements TiedPieces iff:
-  * UCI advertises option TiedPieces as a combo (not a string) with
-    None / a4a5 / i4i5 / e4e5 — UCCI GUIs such as EThinker only list combos
+  * UCI advertises option TiedPieces as a string (any ICCS square list)
+  * None / a4a5 / i4i5 / e4e5 still work (legacy presets are square lists)
   * a pawn sitting on a locked square cannot advance
   * a piece sitting on a locked square cannot be captured
   * empty locked squares stay walkable (setup: a3a4 / i3i4 / e3e4)
+  * arbitrary lists such as c4c5g4g5 freeze every listed square
 
 Run:
   python tests/tied_pieces.py path/to/pikafish
@@ -193,40 +194,31 @@ class TestTiedPieces:
     def test_option_advertised(self) -> None:
         self._tied_option_line()
 
-    def test_tied_pieces_is_uci_combo(self) -> None:
-        # Combo (3-arg Option ctor), not string. UCCI-era GUIs such as
-        # EThinker only list combo options in the settings UI.
+    def test_tied_pieces_is_uci_string(self) -> None:
         line = self._tied_option_line()
         padded = f" {line} "
-        assert " type string " not in padded, (
-            "TiedPieces became type string; EThinker will not list it. "
+        assert " type combo " not in padded, (
+            "TiedPieces is still type combo and cannot freeze arbitrary squares. "
             f"Got: {line}"
         )
-        assert " type combo " in padded, (
-            "TiedPieces must be advertised as type combo "
-            "(Option(\"None var None var a4a5 var i4i5 var e4e5\", \"None\", ...)). "
+        assert " type string " in padded, (
+            "TiedPieces must be advertised as type string "
+            "(Option(\"None\", ...)) so any ICCS square list is accepted. "
             f"Got: {line}"
         )
-        for token in ("var None", "var a4a5", "var i4i5", "var e4e5"):
-            assert token in line, (
-                f"TiedPieces combo is missing '{token}': {line}"
-            )
 
-    def test_combo_rejects_unknown_value(self) -> None:
-        # Combo silently ignores values that are not in the var list, so the
-        # previous lock stays. A string option would accept the garbage value
-        # and set_tied_pieces() would fall through to None.
+    def test_invalid_value_keeps_lock(self) -> None:
+        # Garbage must not parse as None and clear a previous lock.
         self._set_tied("a4a5")
         self.engine.send("position startpos moves a3a4 a6a5")
         locked, _ = go_perft(self.engine)
         assert "a4a5" not in locked, "precondition: a4a5 should already be frozen"
 
-        self._set_tied("not-a-combo-value")
+        self._set_tied("not-a-square-list")
         self.engine.send("position startpos moves a3a4 a6a5")
         still_locked, _ = go_perft(self.engine)
         assert "a4a5" not in still_locked, (
-            "TiedPieces accepted an unknown value and cleared the lock; "
-            "the option was likely changed from combo to string"
+            "TiedPieces accepted an unknown value and cleared the lock"
         )
 
     def test_empty_tied_squares_stay_walkable(self) -> None:
@@ -286,18 +278,53 @@ class TestTiedPieces:
         self.engine.send("isready")
         self.engine.read_until(lambda ln: ln == "readyok")
 
+    def test_arbitrary_list_freezes_two_pawn_pairs(self) -> None:
+        setup = "c3c4 c6c5 g3g4 g6g5"
+        frozen = ("c4c5", "g4g5")
+
+        self._set_tied("None")
+        self.engine.send(f"position startpos moves {setup}")
+        unlocked, _ = go_perft(self.engine)
+        for move in frozen:
+            assert move in unlocked, (
+                f"control failed: {move} should be legal with TiedPieces None "
+                f"after `{setup}`"
+            )
+
+        for value in ("c4c5g4g5", "c4,c5,g4,g5"):
+            self._set_tied(value)
+            self.engine.send(f"position startpos moves {setup}")
+            locked, _ = go_perft(self.engine)
+            for move in frozen:
+                assert move not in locked, (
+                    f"TiedPieces {value} did not freeze {move}"
+                )
+            assert "a3a4" in locked, (
+                f"TiedPieces {value} froze an unlisted pawn (a3a4 missing)"
+            )
+
+    def test_single_square_forbids_capture(self) -> None:
+        self._set_tied("a4")
+        self.engine.send(f"position fen {CAPTURE_FEN}")
+        locked, _ = go_perft(self.engine)
+        assert CAPTURE_MOVE not in locked, (
+            f"TiedPieces a4 still allows capturing the locked pawn ({CAPTURE_MOVE})"
+        )
+
 
 def run(path: str) -> int:
     engine = Engine(path)
     tests = TestTiedPieces(engine)
     methods = [
         tests.test_option_advertised,
-        tests.test_tied_pieces_is_uci_combo,
-        tests.test_combo_rejects_unknown_value,
+        tests.test_tied_pieces_is_uci_string,
+        tests.test_invalid_value_keeps_lock,
         tests.test_empty_tied_squares_stay_walkable,
         tests.test_cannot_move_piece_on_tied_square,
         tests.test_cannot_capture_piece_on_tied_square,
         tests.test_setup_moves_onto_tied_squares_still_apply,
+        tests.test_arbitrary_list_freezes_two_pawn_pairs,
+        tests.test_single_square_forbids_capture,
     ]
 
     passed = failed = 0
