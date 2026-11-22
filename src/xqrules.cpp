@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <cstring>
 #include <iterator>
+#include <memory>
 #include <vector>
 
 #include "attacks.h"
@@ -85,9 +86,10 @@ SkyChaseMap Position::sky_chased(Color c) {
             if (!chase_legal(m, checkUs))
                 continue;
 
-            bool trueChase            = true;
-            const auto [captured, id] = do_move(m);
-            Bitboard recaptures       = attackers_to(to) & pieces(sideToMove);
+            bool     trueChase  = true;
+            int      id         = 0;
+            Piece    captured   = do_move(m, id);
+            Bitboard recaptures = attackers_to(to) & pieces(sideToMove);
             while (recaptures)
             {
                 Square sq = pop_lsb(recaptures);
@@ -167,9 +169,10 @@ ChaseMap Position::xq_chased(Color c) {
 
             if (chase_legal(m, checkUs))
             {
-                bool trueChase            = true;
-                const auto [captured, id] = do_move(m);
-                Bitboard recaptures       = attackers_to(to) & pieces(sideToMove);
+                bool     trueChase  = true;
+                int      id         = 0;
+                Piece    captured   = do_move(m, id);
+                Bitboard recaptures = attackers_to(to) & pieces(sideToMove);
                 while (recaptures)
                 {
                     Square s = pop_lsb(recaptures);
@@ -202,32 +205,46 @@ ChaseMap Position::xq_chased(Color c) {
     return chase;
 }
 
+// Creates an isolated copy of src (board plus its current state) so that a
+// branch can be searched without touching the shared state ring.
+void Position::init_xq_branch(const Position& src) {
+
+    std::memset(this, 0, sizeof(Position));
+    std::memcpy((void*) this, (const void*) &src, offsetof(Position, filter));
+    std::memcpy((void*) idBoard, (const void*) src.idBoard, sizeof(idBoard));
+
+    stateInfos[0] = *src.st;
+    stateIdx      = 0;
+    st            = &stateInfos[0];
+}
+
 bool Position::has_mate_threat(Depth d) {
 
     if (d == -1)
     {
-        StateInfo nullSt;
-        do_null_move(nullSt);
-        bool mateThreat = has_mate_threat(0);
-        undo_null_move();
-        return mateThreat;
+        // Walk the threats on an isolated copy: chasing detection has already
+        // rolled the board of this position back, so do_move() must not touch
+        // the shared state ring.
+        auto branch = std::make_unique<Position>();
+        branch->init_xq_branch(*this);
+        branch->do_null_move();
+        return branch->has_mate_threat(0);
     }
 
     if (d >= RuleConfig::mateThreatDepth)
         return false;
 
-    StateInfo tempSt[2];
     for (const auto& check : MoveList<ALL>(*this))
     {
         if (!gives_check(check))
             continue;
 
-        do_move(check, tempSt[0]);
+        do_move(check);
         bool solvable = false;
 
         for (const auto& evasion : MoveList<ALL>(*this))
         {
-            do_move(evasion, tempSt[1]);
+            do_move(evasion);
             solvable = !has_mate_threat(d + 1);
             undo_move(evasion);
             if (solvable)
@@ -250,9 +267,13 @@ void Position::set_sky_info(int d) {
         if (board[sq] != NO_PIECE)
             idBoard[sq] = color_of(board[sq]) == WHITE ? whiteId++ : blackId++;
 
-    for (int i = 0; i < d && st && st->previous; ++i)
+    const int maxBack = std::min<int>(st->pliesFromNull, MAX_HIST - 1);
+
+    for (int i = 0; i < d && i < maxBack; ++i)
     {
-        StateInfo* cur = st;
+        StateInfo* cur = &stateInfos[(stateIdx - i) & (MAX_HIST - 1)];
+        st             = cur;
+
         if (cur->capturedPiece != NO_PIECE)
             break;
 
@@ -275,13 +296,13 @@ void Position::set_sky_info(int d) {
             }
 
             undo_move(cur->move, cur->capturedPiece, 0);
-            st = cur->previous;
+            st = &stateInfos[(stateIdx - i - 1) & (MAX_HIST - 1)];
             continue;
         }
 
         SkyChaseMap after = sky_chased(mover);
         undo_move(cur->move, cur->capturedPiece, 0);
-        st = cur->previous;
+        st                 = &stateInfos[(stateIdx - i - 1) & (MAX_HIST - 1)];
         SkyChaseMap exact  = after.exact_diff(sky_chased(mover));
         cur->skyVictims    = exact.victims();
         cur->skyChasers    = exact.chasers();
@@ -293,19 +314,23 @@ Value Position::detect_sky_cycle(int d, int ply) {
     if (d < 4 || !st)
         return VALUE_DRAW;
 
-    const Color    currentSide = sideToMove;
-    StateInfo* const start     = st;
+    const Color      currentSide = sideToMove;
+    const u16        startIdx    = stateIdx;
+    StateInfo* const start       = st;
 
-    Position deepRollback;
-    std::memcpy((void*) &deepRollback, (const void*) this, offsetof(Position, filter));
-    std::memcpy((void*) deepRollback.idBoard, (const void*) idBoard, sizeof(idBoard));
+    // Snapshot of the board before rolling back, used by the deep history pass.
+    std::byte saved[offsetof(Position, filter)];
+    std::memcpy(saved, (const void*) this, sizeof(saved));
+    int savedIdBoard[SQUARE_NB];
+    std::memcpy(savedIdBoard, (const void*) idBoard, sizeof(savedIdBoard));
 
     set_sky_info(d);
 
     std::vector<StateInfo*> q;
     q.reserve(d);
-    for (StateInfo* p = start; p && p->previous && int(q.size()) < d; p = p->previous)
+    for (int k = 0; k < d && k < start->pliesFromNull; ++k)
     {
+        StateInfo* p = &stateInfos[(startIdx - k) & (MAX_HIST - 1)];
         if (p->capturedPiece != NO_PIECE)
             break;
         q.push_back(p);
@@ -318,11 +343,18 @@ Value Position::detect_sky_cycle(int d, int ply) {
         if (!deepQ.empty())
             return deepQ;
         const int historyDepth = std::min(start->pliesFromNull, 128);
-        deepRollback.set_sky_info(std::max(d, historyDepth));
+
+        // Rewind to the snapshot and redo the bookkeeping further back
+        std::memcpy((void*) this, saved, sizeof(saved));
+        std::memcpy((void*) idBoard, savedIdBoard, sizeof(savedIdBoard));
+        stateIdx = startIdx;
+        st       = start;
+        set_sky_info(std::max(d, historyDepth));
+
         deepQ.reserve(historyDepth);
-        for (StateInfo* p = start; p && p->previous && int(deepQ.size()) < historyDepth;
-             p            = p->previous)
+        for (int k = 0; k < historyDepth && k < start->pliesFromNull; ++k)
         {
+            StateInfo* p = &stateInfos[(startIdx - k) & (MAX_HIST - 1)];
             if (p->capturedPiece != NO_PIECE)
                 break;
             deepQ.push_back(p);
@@ -496,59 +528,68 @@ Value Position::xq_detect_chases(int d, int ply) {
 
     for (int i = 0; i < d; ++i)
     {
+        StateInfo* cur = &stateInfos[(stateIdx - i) & (MAX_HIST - 1)];
+        st             = cur;
+
         if (!chase[~sideToMove])
         {
             if (!chase[sideToMove])
                 break;
-            undo_move(st->move, st->capturedPiece);
-            st = st->previous;
-        }
-        else if (st->checkersBB
-                 || (chineseRule && RuleConfig::mateThreatDepth > 0 && has_mate_threat()))
-        {
-            chase[~sideToMove] &= chineseLike ? 0xFFFF : 0;
-            rooks[~sideToMove] = 0;
-            undo_move(st->move, st->capturedPiece);
-            st = st->previous;
+            undo_move(cur->move, cur->capturedPiece);
+            st = &stateInfos[(stateIdx - i - 1) & (MAX_HIST - 1)];
         }
         else
         {
-            ChaseMap oldChase = xq_chased(~sideToMove);
-            u16      flag     = 0;
+            bool mateThreat = cur->checkersBB;
+            if (!mateThreat && chineseRule && RuleConfig::mateThreatDepth > 0)
+                mateThreat = has_mate_threat();
 
-            if (!chineseLike && rooks[~sideToMove]
-                && (blockers_for_king(sideToMove) & pieces(sideToMove, ROOK)))
+            if (mateThreat)
             {
-                Bitboard knights = pinners(~sideToMove) & pieces(KNIGHT);
-                while (knights)
+                chase[~sideToMove] &= chineseLike ? 0xFFFF : 0;
+                rooks[~sideToMove] = 0;
+                undo_move(cur->move, cur->capturedPiece);
+                st = &stateInfos[(stateIdx - i - 1) & (MAX_HIST - 1)];
+            }
+            else
+            {
+                ChaseMap oldChase = xq_chased(~sideToMove);
+                u16      flag     = 0;
+
+                if (!chineseLike && rooks[~sideToMove]
+                    && (blockers_for_king(sideToMove) & pieces(sideToMove, ROOK)))
                 {
-                    Square   s = pop_lsb(knights);
-                    Bitboard b = between_bb(king_square(sideToMove), s) ^ s;
-                    s          = pop_lsb(b);
-                    if (piece_on(s) == make_piece(sideToMove, ROOK))
-                        flag |= u16(1 << idBoard[s]);
+                    Bitboard knights = pinners(~sideToMove) & pieces(KNIGHT);
+                    while (knights)
+                    {
+                        Square   s = pop_lsb(knights);
+                        Bitboard b = between_bb(king_square(sideToMove), s) ^ s;
+                        s          = pop_lsb(b);
+                        if (piece_on(s) == make_piece(sideToMove, ROOK))
+                            flag |= u16(1 << idBoard[s]);
+                    }
                 }
-            }
 
-            undo_move(st->move, st->capturedPiece);
-            st = st->previous;
+                undo_move(cur->move, cur->capturedPiece);
+                st = &stateInfos[(stateIdx - i - 1) & (MAX_HIST - 1)];
 
-            ChaseMap chases = oldChase;
-            (void) (chases & newChase[sideToMove]);
-            u16 chasesU16        = u16(chases);
-            newChase[sideToMove] = xq_chased(sideToMove);
-
-            if (chineseLike)
-            {
-                chases = oldChase;
+                ChaseMap chases = oldChase;
                 (void) (chases & newChase[sideToMove]);
-                chasesU16 = u16(chases);
-            }
-            else if (i == d - 2)
-                chasesU16 &= ~u16(newChase[sideToMove]);
+                u16 chasesU16        = u16(chases);
+                newChase[sideToMove] = xq_chased(sideToMove);
 
-            rooks[sideToMove] &= chasesU16 & flag;
-            chase[sideToMove] &= chineseLike && chasesU16 ? 0xFFFF : chasesU16;
+                if (chineseLike)
+                {
+                    chases = oldChase;
+                    (void) (chases & newChase[sideToMove]);
+                    chasesU16 = u16(chases);
+                }
+                else if (i == d - 2)
+                    chasesU16 &= ~u16(newChase[sideToMove]);
+
+                rooks[sideToMove] &= chasesU16 & flag;
+                chase[sideToMove] &= chineseLike && chasesU16 ? 0xFFFF : chasesU16;
+            }
         }
     }
 
@@ -583,20 +624,23 @@ bool Position::xq_rule_judge(Value& result, int ply) {
             result = winner == sideToMove ? mate_in(ply) : mated_in(ply);
     };
 
-    int end = std::min(st->rule60 + std::max(0, st->check10[WHITE] - 10)
-                         + std::max(0, st->check10[BLACK] - 10),
-                       st->pliesFromNull);
+    const auto previous = [this](int d) -> const StateInfo& {
+        return stateInfos[(stateIdx - d) & (MAX_HIST - 1)];
+    };
+
+    int end = std::min(
+      {st->rule60 + std::max(0, st->check10[WHITE] - 10) + std::max(0, st->check10[BLACK] - 10),
+       st->pliesFromNull, MAX_HIST - MAX_PLY - 10 - 1});
 
     if (end >= 4 && filter[st->key] >= 1)
     {
-        int        cnt       = 0;
-        StateInfo* stp       = st->previous->previous;
-        bool       checkThem = st->checkersBB && stp->checkersBB;
-        bool       checkUs   = st->previous->checkersBB && stp->previous->checkersBB;
+        int  cnt       = 0;
+        bool checkThem = st->checkersBB && previous(2).checkersBB;
+        bool checkUs   = previous(1).checkersBB && previous(3).checkersBB;
 
         for (int i = 4; i <= end; i += 2)
         {
-            stp = stp->previous->previous;
+            const StateInfo* stp = &previous(i);
             checkThem &= bool(stp->checkersBB);
 
             if (stp->key == st->key)
@@ -615,12 +659,23 @@ bool Position::xq_rule_judge(Value& result, int ply) {
                         result = VALUE_DRAW;
                     else if (!checkThem && !checkUs)
                     {
-                        Position rollback;
-                        memcpy((void*) &rollback, (const void*) this, offsetof(Position, filter));
-                        memcpy((void*) rollback.idBoard, (const void*) idBoard, sizeof(idBoard));
+                        // Detection rolls the board and the state pointer back, so
+                        // snapshot them and restore afterwards.
+                        std::byte saved[offsetof(Position, filter)];
+                        std::memcpy(saved, (const void*) this, sizeof(saved));
+                        int savedIdBoard[SQUARE_NB];
+                        std::memcpy(savedIdBoard, (const void*) idBoard, sizeof(savedIdBoard));
+                        const u16  savedStateIdx = stateIdx;
+                        StateInfo* const savedSt = st;
+
                         result = RuleConfig::repetitionRule == RR::SKY
-                                 ? rollback.detect_sky_cycle(i, ply)
-                                 : rollback.xq_detect_chases(i, ply);
+                                 ? detect_sky_cycle(i, ply)
+                                 : xq_detect_chases(i, ply);
+
+                        std::memcpy((void*) this, saved, sizeof(saved));
+                        std::memcpy((void*) idBoard, savedIdBoard, sizeof(savedIdBoard));
+                        stateIdx = savedStateIdx;
+                        st       = savedSt;
                     }
                     else
                         result = !checkUs ? mate_in(ply)
@@ -639,13 +694,12 @@ bool Position::xq_rule_judge(Value& result, int ply) {
                     if (filter[st->key] <= 1)
                     {
                         const int maxPly = std::max(1, RuleConfig::rule60MaxPly);
-                        if (st->rule60 < maxPly && st->previous->key == stp->previous->key)
+                        if (st->rule60 < maxPly && previous(1).key == previous(i + 1).key)
                         {
-                            StateInfo* prev = st->previous;
-                            while ((prev = prev->previous) != stp)
-                                if (filter[prev->key] > 1)
-                                    break;
-                            if (prev == stp)
+                            int j = 2;
+                            while (j < i && filter[previous(j).key] <= 1)
+                                ++j;
+                            if (j == i)
                                 return true;
                         }
                         break;
@@ -654,7 +708,7 @@ bool Position::xq_rule_judge(Value& result, int ply) {
             }
 
             if (i + 1 <= end)
-                checkUs &= bool(stp->previous->checkersBB);
+                checkUs &= bool(previous(i + 1).checkersBB);
         }
     }
 
@@ -713,8 +767,7 @@ bool Position::xq_rule_judge(Value& result, int ply) {
                 }
                 for (const auto& move : moves)
                 {
-                    StateInfo tempSt;
-                    do_move(move, tempSt);
+                    do_move(move);
                     bool mate = MoveList<ALL>(*this).size() == 0;
                     undo_move(move);
                     if (mate)
