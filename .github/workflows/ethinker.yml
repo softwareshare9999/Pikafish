@@ -1,0 +1,35 @@
+name: EThinker
+
+# Fork-only regression: EThinker (auto) sends bare "startpos" / "fen ..." lines
+# without the "position" prefix. Kept in its own workflow so that upstream's
+# pikafish.yml can stay identical to official Pikafish.
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  EThinker-UCCI:
+    name: EThinker UCCI regression
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      ARCH: x86-64-bmi2
+      COMP: gcc
+      EXE: pikafish-ethinker
+    defaults:
+      run:
+        working-directory: src
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Compile
+        run: |
+          make -j4 build EXE=$EXE
+          cp $EXE ../
+
+      - name: EThinker UCCI regression test
+        run: python3 ../tests/ethinker.py ./$EXE

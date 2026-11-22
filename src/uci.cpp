@@ -42,7 +42,7 @@
 #include "search.h"
 #include "types.h"
 #include "ucioption.h"
-#include "xqoptions.h"
+#include "xquci.h"
 
 namespace Stockfish {
 
@@ -137,11 +137,8 @@ void UCIEngine::loop() {
         }
         else if (token == "position")
             position(is);
-        // Non-standard: some GUIs (EThinker auto) omit the "position" prefix
-        // and send a bare "fen ..." or "startpos" line. Rewind the stream so
-        // position() can parse it the same way as "position fen/startpos ...".
-        else if (token == "fen" || token == "startpos")
-            is.seekg(0), position(is);
+        else if (xq_is_bare_position_command(token, is))
+            position(is);
         else if (token == "ucinewgame")
             engine.search_clear();
         else if (token == "isready")
@@ -578,21 +575,7 @@ std::string UCIEngine::format_score(const Score& s) {
 // without treatment of mate and similar special scores.
 int UCIEngine::to_cp(Value v, const Position& pos) {
 
-    // Display-only conversion selected by the "ScoreType" UCI option.
-    // The internal search value is untouched, and the WDL output
-    // always uses win_rate_model regardless of this setting.
-    if (scoreTypeMode == ScoreTypeMode::RAW)
-        return int(v);
-
-    // PawnValueNormalized: 100cp == one pawn (PawnValue).
-    if (scoreTypeMode == ScoreTypeMode::PAWN_VALUE_NORMALIZED)
-        return int(std::round(100 * int(v) / PawnValue));
-
-    // Elo: official WDL conversion, doubled as a display-only calibration
-    // so that a one-pawn edge reads around 70cp instead of ~35cp.
-    auto [a, b] = win_rate_params(pos);
-
-    return int(std::round(200.0 * int(v) / a));
+    return xq_to_cp(v, win_rate_params(pos).a);
 }
 
 std::string UCIEngine::wdl(Value v, const Position& pos) {

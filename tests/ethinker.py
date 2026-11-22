@@ -3,13 +3,15 @@
 
 Official UCI requires `position startpos` / `position fen ...`.
 EThinker (auto) omits the `position` prefix and sends a bare
-`startpos` or `fen ...` line. This fork keeps that handler in uci.cpp;
-upstream Pikafish does not.
+`startpos` or `fen ...` line. This fork keeps that handler in
+src/xquci.cpp (hooked from uci.cpp); upstream Pikafish does not.
 
 This file is separate from tests/instrumented.py so an upstream merge
-cannot drop the checks. Assertions compare the engine's own `d` FEN
-after a bare command vs the same setup via standard `position ...`,
-so unrelated search/eval changes do not fail this suite.
+cannot drop the checks. It runs from the fork-only
+.github/workflows/ethinker.yml, leaving upstream's pikafish.yml untouched.
+Assertions compare the engine's own `d` FEN after a bare command vs the
+same setup via standard `position ...`, so unrelated search/eval changes
+do not fail this suite.
 
 Run:
   python tests/ethinker.py path/to/pikafish
