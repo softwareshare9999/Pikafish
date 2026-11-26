@@ -12,6 +12,8 @@
 #include <cstring>
 #include <iterator>
 #include <memory>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 #include "attacks.h"
@@ -21,6 +23,30 @@
 namespace Stockfish {
 
 using namespace Attacks;
+
+namespace {
+
+// StateInfo is upstream-owned and the counter that bounds the usable history in
+// the state ring buffer has already been renamed once (pliesFromNull -> repWindow,
+// "cache repetition look behind max window len"). Probe both spellings so an
+// upstream sync cannot break the rule code again; if a future sync renames the
+// counter a third time, only this probe needs to learn the new name.
+template<typename S, typename = void>
+struct ReversibleWindow {
+    static int of(const S& s) { return s.pliesFromNull; }
+};
+
+template<typename S>
+struct ReversibleWindow<S, std::void_t<decltype(std::declval<const S&>().repWindow)>> {
+    static int of(const S& s) { return s.repWindow; }
+};
+
+// States further back than this may have been overwritten by a deeper search.
+int xq_history_window(const StateInfo& s) {
+    return std::min(ReversibleWindow<StateInfo>::of(s), MAX_HIST - MAX_PLY - 10 - 1);
+}
+
+}  // namespace
 
 bool Position::chase_legal(Move m, Bitboard b) const {
 
@@ -267,7 +293,7 @@ void Position::set_sky_info(int d) {
         if (board[sq] != NO_PIECE)
             idBoard[sq] = color_of(board[sq]) == WHITE ? whiteId++ : blackId++;
 
-    const int maxBack = std::min<int>(st->pliesFromNull, MAX_HIST - 1);
+    const int maxBack = xq_history_window(*st);
 
     for (int i = 0; i < d && i < maxBack; ++i)
     {
@@ -317,6 +343,7 @@ Value Position::detect_sky_cycle(int d, int ply) {
     const Color      currentSide = sideToMove;
     const u16        startIdx    = stateIdx;
     StateInfo* const start       = st;
+    const int        window      = xq_history_window(*start);
 
     // Snapshot of the board before rolling back, used by the deep history pass.
     std::byte saved[offsetof(Position, filter)];
@@ -328,7 +355,7 @@ Value Position::detect_sky_cycle(int d, int ply) {
 
     std::vector<StateInfo*> q;
     q.reserve(d);
-    for (int k = 0; k < d && k < start->pliesFromNull; ++k)
+    for (int k = 0; k < d && k < window; ++k)
     {
         StateInfo* p = &stateInfos[(startIdx - k) & (MAX_HIST - 1)];
         if (p->capturedPiece != NO_PIECE)
@@ -342,7 +369,7 @@ Value Position::detect_sky_cycle(int d, int ply) {
     auto                    ensure_deep_history = [&]() -> const std::vector<StateInfo*>& {
         if (!deepQ.empty())
             return deepQ;
-        const int historyDepth = std::min(start->pliesFromNull, 128);
+        const int historyDepth = std::min(window, 128);
 
         // Rewind to the snapshot and redo the bookkeeping further back
         std::memcpy((void*) this, saved, sizeof(saved));
@@ -352,7 +379,7 @@ Value Position::detect_sky_cycle(int d, int ply) {
         set_sky_info(std::max(d, historyDepth));
 
         deepQ.reserve(historyDepth);
-        for (int k = 0; k < historyDepth && k < start->pliesFromNull; ++k)
+        for (int k = 0; k < historyDepth; ++k)
         {
             StateInfo* p = &stateInfos[(startIdx - k) & (MAX_HIST - 1)];
             if (p->capturedPiece != NO_PIECE)
@@ -629,8 +656,8 @@ bool Position::xq_rule_judge(Value& result, int ply) {
     };
 
     int end = std::min(
-      {st->rule60 + std::max(0, st->check10[WHITE] - 10) + std::max(0, st->check10[BLACK] - 10),
-       st->pliesFromNull, MAX_HIST - MAX_PLY - 10 - 1});
+      st->rule60 + std::max(0, st->check10[WHITE] - 10) + std::max(0, st->check10[BLACK] - 10),
+      xq_history_window(*st));
 
     if (end >= 4 && filter[st->key] >= 1)
     {
