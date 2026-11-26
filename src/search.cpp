@@ -149,7 +149,7 @@ void update_all_stats(const Position& pos,
 bool is_shuffling(Move move, Stack* const ss, const Position& pos) {
     if (pos.capture(move) || pos.rule60_count() < 10)
         return false;
-    if (pos.plies_from_null() < 6 || ss->ply < 20)
+    if (pos.rep_window() < 6 || ss->ply < 20)
         return false;
     return move.from_sq() == (ss - 2)->currentMove.to_sq()
         && (ss - 2)->currentMove.from_sq() == (ss - 4)->currentMove.to_sq();
@@ -624,36 +624,27 @@ bool Search::Worker::iterative_deepening() {
 }
 
 void Search::Worker::do_move(
-  Position& pos, const Move move, const bool givesCheck, const bool capture, Stack* const ss) {
+  Position& pos, const Move move, const bool givesCheck, const bool capture, Stack& ss) {
     // prefetch_key() does not model castling, en passant or promotion exactly.
     // The correction-history prefetches also approximate castling and promotion.
     // For these rare moves the prefetches land on unused lines.
     prefetch(tt.get_cluster(pos.prefetch_key(move)));
 
-    if (ss != nullptr)
-    {
-        const Piece  pc = pos.moved_piece(move);
-        const Square to = move.to_sq();
+    const Piece  pc = pos.moved_piece(move);
+    const Square to = move.to_sq();
 
-        prefetch(&(*(ss - 1)->continuationCorrectionHistory)[pc][to]);
-        prefetch(&(*(ss - 3)->continuationCorrectionHistory)[pc][to]);
-        prefetch(&(*(ss - 5)->continuationCorrectionHistory)[pc][to]);
-    }
+    prefetch(&(*(&ss - 1)->continuationCorrectionHistory)[pc][to]);
+    prefetch(&(*(&ss - 3)->continuationCorrectionHistory)[pc][to]);
+    prefetch(&(*(&ss - 5)->continuationCorrectionHistory)[pc][to]);
 
     ++nodes;
 
     Dirties& dirties = accumulatorStack.push(pos);
     pos.do_move(move, givesCheck, dirties, &sharedHistory);
 
-    if (ss != nullptr)
-    {
-        auto& dirtyPiece = dirties.dirtyPiece;
-        ss->currentMove  = move;
-        ss->continuationHistory =
-          &continuationHistory[ss->inCheck][capture][dirtyPiece.pc][move.to_sq()];
-        ss->continuationCorrectionHistory =
-          &continuationCorrectionHistory[dirtyPiece.pc][move.to_sq()];
-    }
+    ss.currentMove                   = move;
+    ss.continuationHistory           = &continuationHistory[ss.inCheck][capture][pc][to];
+    ss.continuationCorrectionHistory = &continuationCorrectionHistory[pc][to];
 }
 
 void Search::Worker::do_null_move(Position& pos, Stack* const ss) {
@@ -1022,7 +1013,7 @@ Value Search::Worker::search(
             capture = pos.capture(move);
             assert(capture);
 
-            do_move(pos, move, pos.gives_check(move), capture, ss);
+            do_move(pos, move, pos.gives_check(move), capture, *ss);
             // Perform a preliminary qsearch to verify that the move holds
             value = -qsearch<NonPV>(pos, ss + 1, -probCutBeta, -probCutBeta + 1);
 
@@ -1245,7 +1236,7 @@ moves_loop:  // When in check, search starts here
         u64 nodeCount = rootNode ? u64(nodes) : 0;
 
         // Step 17. Make the move
-        do_move(pos, move, givesCheck, capture, ss);
+        do_move(pos, move, givesCheck, capture, *ss);
 
         // Add extension to new depth
         newDepth += extension;
@@ -1490,7 +1481,7 @@ moves_loop:  // When in check, search starts here
             (capture ? capturesSearched : quietsSearched).push_back(move);
     }
 
-    // Step 23. Check for mate and stalemate, otherwise update bestmove/countermove stats
+    // Step 23. Check for mate and stalemate, otherwise update best move and history stats
 
     assert(moveCount || !ss->inCheck || excludedMove || !MoveList<ALL>(pos).size());
 
@@ -1514,7 +1505,7 @@ moves_loop:  // When in check, search starts here
             ttMoveHistory << (bestMove == ttData.move ? 799 : -863);
     }
 
-    // Bonus for prior quiet countermove that caused the fail low
+    // Bonus for the prior quiet move that caused the fail low
     else if (!priorCapture && prevSq != SQ_NONE)
     {
         int bonusScale = -231;
@@ -1539,7 +1530,7 @@ moves_loop:  // When in check, search starts here
             sharedHistory.pawn_entry(pos)[pos.piece_on(prevSq)][prevSq] << scaledBonus * 244 / 8192;
     }
 
-    // Bonus for prior capture countermove that caused the fail low
+    // Bonus for the prior capture that caused the fail low
     else if (prevSq != SQ_NONE)
     {
         assert(priorCapture);
@@ -1769,7 +1760,7 @@ Value Search::Worker::qsearch(Position& pos, Stack* ss, Value alpha, Value beta)
         }
 
         // Step 7. Make and search the move
-        do_move(pos, move, givesCheck, capture, ss);
+        do_move(pos, move, givesCheck, capture, *ss);
 
         value = -qsearch<nodeType>(pos, ss + 1, -beta, -alpha);
         undo_move(pos, move);
